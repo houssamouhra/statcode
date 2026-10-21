@@ -111,26 +111,54 @@ def generate_content(key: str) -> urwid.Widget | None:
     except KeyError:
         return None
 
-    title = "STATUS MESSAGE" if is_code else "HEADER INFO"
-    message_prefix = f"{normalised}: " if is_code else f"{normalised}, Example= "
+    # ---- colour helpers (only things that help scanning) ----
+    def section(title: str) -> urwid.Text:
+        return urwid.Text(("title", title))
+
+    def body(text: str) -> urwid.Padding:
+        return urwid.Padding(urwid.Text(text + "\n"), left=5)
+
+    # Status code / header name gets a distinct colour
+    if is_code:
+        # Colour the numeric code based on class (1xx–5xx)
+        code_attr = {
+            1: "info",  # 1xx
+            2: "success",  # 2xx
+            3: "redirect",  # 3xx
+            4: "clienterr",  # 4xx
+            5: "servererr",  # 5xx
+        }.get(normalised // 100, "code")
+
+        header_line = [
+            (code_attr, str(normalised)),
+            ("default", ": "),
+            ("message", entry["message"]),
+            ("default", "\n"),
+        ]
+        main_title = "STATUS MESSAGE"
+    else:
+        header_line = [
+            ("code", str(normalised)),
+            ("default", ", Example= "),
+            ("message", entry["message"]),
+            ("default", "\n"),
+        ]
+        main_title = "HEADER INFO"
 
     pile = urwid.Pile(
         [
             urwid.Text(
-                "STATCODE: The Manual for HTTP Status Codes and Headers\n",
+                ("header", "STATCODE: The Manual for HTTP Status Codes and Headers\n"),
                 align="center",
             ),
-            urwid.Text(("title", title)),
-            urwid.Padding(
-                urwid.Text(message_prefix + entry["message"] + "\n"),
-                left=5,
-            ),
-            urwid.Text(("title", "CATEGORY")),
-            urwid.Padding(urwid.Text(entry["category"] + "\n"), left=5),
-            urwid.Text(("title", "DESCRIPTION")),
-            urwid.Padding(urwid.Text(entry["description"] + "\n"), left=5),
-            urwid.Text(("title", "COPYRIGHT")),
-            urwid.Padding(urwid.Text(_copyright_text(is_code) + "\n"), left=5),
+            section(main_title),
+            urwid.Padding(urwid.Text(header_line), left=5),
+            section("CATEGORY"),
+            body(entry["category"]),
+            section("DESCRIPTION"),
+            body(entry["description"]),
+            section("COPYRIGHT"),
+            body(_copyright_text(is_code)),
         ]
     )
 
@@ -141,8 +169,19 @@ class App:
     """Simple full-screen TUI."""
 
     PALETTE = [
+        # existing
         ("menu", "black", "light cyan", "standout"),
         ("title", "default,bold", "default", "bold"),
+        # new semantic colours
+        ("header", "dark cyan", "default"),
+        ("code", "yellow,bold", "default"),
+        ("message", "default,bold", "default"),
+        # status-code class colours
+        ("info", "light blue,bold", "default"),  # 1xx
+        ("success", "light green,bold", "default"),  # 2xx
+        ("redirect", "yellow,bold", "default"),  # 3xx
+        ("clienterr", "light red,bold", "default"),  # 4xx
+        ("servererr", "light magenta,bold", "default"),  # 5xx
     ]
 
     def __init__(self, body: urwid.Widget) -> None:
