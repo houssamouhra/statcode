@@ -193,7 +193,11 @@ class App:
             unhandled_input=self._handle_input,
             handle_mouse=True,
         )
-        loop.run()
+        try:
+            loop.run()
+        except KeyboardInterrupt:
+            # Ctrl+C → clean exit
+            pass
 
     @staticmethod
     def _handle_input(key: str) -> None:
