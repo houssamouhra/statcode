@@ -1,416 +1,233 @@
-#########
-# GLOBALS
-#########
-
+from __future__ import annotations
 
 import os
-import sys
 import shutil
+import sys
+from importlib import resources
+from pathlib import Path
+from typing import Any
 
-import yaml
 import urwid
-from urwid.widget import BOX, FLOW, FIXED
+import yaml
+
+# ---------------------------------------------------------------------------
+# Constants
+# ---------------------------------------------------------------------------
+
+VERSION = "2.1.0"
+
+# Colour helpers (disabled when TERM=dumb)
+_IS_TTY = os.getenv("TERM", "dumb").lower() != "dumb"
+YELLOW = "\033[33m" if _IS_TTY else ""
+RED = "\033[31m" if _IS_TTY else ""
+BOLD = "\033[1m" if _IS_TTY else ""
+UNDERLINE = "\033[4m" if _IS_TTY else ""
+END = "\033[0m" if _IS_TTY else ""
 
 
-#########
-# HELPERS
-#########
+def _load_yaml(name: str) -> dict[str, Any]:
+    """Load a YAML data file that lives next to this module."""
+    try:
+        # Preferred modern way (works with wheels / editable installs)
+        ref = resources.files(__package__).joinpath(name)
+        with ref.open("r", encoding="utf-8") as f:
+            return yaml.safe_load(f)
+    except (TypeError, AttributeError, FileNotFoundError):
+        # Fallback for very old Python / weird environments
+        path = Path(__file__).parent / name
+        with path.open("r", encoding="utf-8") as f:
+            return yaml.safe_load(f)
 
 
-CURR_DIR = os.path.dirname(os.path.realpath(__file__))
-is_not_dumb = os.getenv("TERM", "dumb").lower() != "dumb"
+def get_descriptions(key: str) -> tuple[dict[str, Any], bool, str | int]:
+    """
+    Return (dictionary, is_status_code, normalised_key).
 
-# Scroll actions
-SCROLL_LINE_UP = "line up"
-SCROLL_LINE_DOWN = "line down"
-SCROLL_PAGE_UP = "page up"
-SCROLL_PAGE_DOWN = "page down"
-SCROLL_TO_TOP = "to top"
-SCROLL_TO_END = "to end"
-
-# ASCII color codes
-YELLOW = "\033[33m" if is_not_dumb else ""
-RED = "\033[31m" if is_not_dumb else ""
-BOLD = "\033[1m" if is_not_dumb else ""
-UNDERLINE = "\033[4m" if is_not_dumb else ""
-END = "\033[0m" if is_not_dumb else ""
+    is_status_code is True when the key was an integer status code.
+    """
+    try:
+        code = int(key)
+        data = _load_yaml("code_descriptions.yml")
+        return data, True, code
+    except (TypeError, ValueError):
+        data = _load_yaml("header_descriptions.yml")
+        return data, False, key
 
 
-class Scrollable(urwid.WidgetDecoration):
-    # TODO: Fix scrolling behavior (works with up/down keys, not with cursor) <--- Now works with mouse though
+def _copyright_text(is_status_code: bool) -> str:
+    data = _load_yaml("copyright_description.yml")
+    return data["statuscode"] if is_status_code else data["headers"]
 
-    def sizing(self):
-        return frozenset([BOX])
 
-    def selectable(self):
-        return True
+# ---------------------------------------------------------------------------
+# UI helpers
+# ---------------------------------------------------------------------------
 
-    def __init__(self, widget):
-        """
-        Box widget (wrapper) that makes a fixed or flow widget vertically scrollable.
-        """
 
-        self._trim_top = 0
-        self._scroll_action = None
-        self._forward_keypress = None
-        self._old_cursor_coords = None
-        self._rows_max_cached = 0
-        self.__super.__init__(widget)
+def _make_scrollable(widget: urwid.Widget) -> urwid.Widget:
+    """Prefer urwid’s built-in Scrollable; fall back to a minimal implementation."""
+    if hasattr(urwid, "Scrollable"):
+        return urwid.Scrollable(widget)
 
-    def render(self, size, focus=False):
-        maxcol, maxrow = size
+    # Minimal fallback for very old urwid (should almost never be needed)
+    class _Scrollable(urwid.WidgetDecoration):
+        def sizing(self):
+            return frozenset([urwid.BOX])
 
-        # Render complete original widget
-        ow = self._original_widget
-        ow_size = self._get_original_widget_size(size)
-        canv = urwid.CompositeCanvas(ow.render(ow_size, focus))
-        canv_cols, canv_rows = canv.cols(), canv.rows()
+        def selectable(self):
+            return True
 
-        if canv_cols <= maxcol:
-            pad_width = maxcol - canv_cols
-            if pad_width > 0:  # Canvas is narrower than available horizontal space
-                canv.pad_trim_left_right(0, pad_width)
+        def __init__(self, w):
+            self._trim_top = 0
+            super().__init__(w)
 
-        if canv_rows <= maxrow:
-            fill_height = maxrow - canv_rows
-            if fill_height > 0:  # Canvas is lower than available vertical space
-                canv.pad_trim_top_bottom(0, fill_height)
-
-        if (
-            canv_cols <= maxcol and canv_rows <= maxrow
-        ):  # Canvas is small enough to fit without trimming
+        def render(self, size, focus=False):
+            maxcol, maxrow = size
+            ow = self._original_widget
+            canv = urwid.CompositeCanvas(ow.render((maxcol,), focus))
+            if canv.rows() > maxrow:
+                canv.trim(self._trim_top)
+                canv.trim_end(canv.rows() - maxrow)
             return canv
 
-        self._adjust_trim_top(canv, size)
-
-        # Trim canvas if necessary
-        trim_top = self._trim_top
-        trim_end = canv_rows - maxrow - trim_top
-        trim_right = canv_cols - maxcol
-        if trim_top > 0:
-            canv.trim(trim_top)
-        if trim_end > 0:
-            canv.trim_end(trim_end)
-        if trim_right > 0:
-            canv.pad_trim_left_right(0, -trim_right)
-
-        # Disable cursor display if cursor is outside of visible canvas parts
-        if canv.cursor is not None:
-            curscol, cursrow = canv.cursor
-            if cursrow >= maxrow or cursrow < 0:
-                canv.cursor = None
-
-        # Let keypress() know if original_widget should get keys
-        self._forward_keypress = bool(canv.cursor)
-
-        return canv
-
-    def mouse_event(self, size, event, button, col, row, focus):
-        if "press" in event.split(" "):
-            if button in (4, 5):
-                self.keypress(size, SCROLL_PAGE_DOWN if button == 5 else SCROLL_PAGE_UP)
-
-    def keypress(self, size, key):
-        if self._forward_keypress:
-            ow = self._original_widget
-            ow_size = self._get_original_widget_size(size)
-
-            # Remember previous cursor position if possible
-            if hasattr(ow, "get_cursor_coords"):
-                self._old_cursor_coords = ow.get_cursor_coords(ow_size)
-
-            key = ow.keypress(ow_size, key)
-            if key is None:
-                return None
-
-        # Handle up/down, page up/down, etc
-        command_map = self._command_map
-        if command_map[key] == urwid.CURSOR_UP:
-            self._scroll_action = SCROLL_LINE_UP
-        elif command_map[key] == urwid.CURSOR_DOWN:
-            self._scroll_action = SCROLL_LINE_DOWN
-        elif command_map[key] == urwid.CURSOR_PAGE_UP:
-            self._scroll_action = SCROLL_PAGE_UP
-        elif command_map[key] == urwid.CURSOR_PAGE_DOWN:
-            self._scroll_action = SCROLL_PAGE_DOWN
-        elif command_map[key] == urwid.CURSOR_MAX_LEFT:  # "home"
-            self._scroll_action = SCROLL_TO_TOP
-        elif command_map[key] == urwid.CURSOR_MAX_RIGHT:  # "end"
-            self._scroll_action = SCROLL_TO_END
-        else:
-            return key
-
-        self._invalidate()
-
-    def mouse_event(self, size, event, button, col, row, focus):
-        ow = self._original_widget
-        if hasattr(ow, "mouse_event"):
-            ow_size = self._get_original_widget_size(size)
-            row += self._trim_top
-            return ow.mouse_event(ow_size, event, button, col, row, focus)
-        else:
-            return False
-
-    def _adjust_trim_top(self, canv, size):
-        """
-        Adjust self._trim_top according to self._scroll_action
-        """
-
-        action = self._scroll_action
-        self._scroll_action = None
-
-        maxcol, maxrow = size
-        trim_top = self._trim_top
-        canv_rows = canv.rows()
-
-        if trim_top < 0:
-            # Negative trim_top values use bottom of canvas as reference
-            trim_top = canv_rows - maxrow + trim_top + 1
-
-        if canv_rows <= maxrow:
-            self._trim_top = 0  # Reset scroll position
-            return
-
-        def ensure_bounds(new_trim_top):
-            return max(0, min(canv_rows - maxrow, new_trim_top))
-
-        if action == SCROLL_LINE_UP:
-            self._trim_top = ensure_bounds(trim_top - 1)
-        elif action == SCROLL_LINE_DOWN:
-            self._trim_top = ensure_bounds(trim_top + 1)
-        elif action == SCROLL_PAGE_UP:
-            self._trim_top = ensure_bounds(trim_top - maxrow + 1)
-        elif action == SCROLL_PAGE_DOWN:
-            self._trim_top = ensure_bounds(trim_top + maxrow - 1)
-        elif action == SCROLL_TO_TOP:
-            self._trim_top = 0
-        elif action == SCROLL_TO_END:
-            self._trim_top = canv_rows - maxrow
-        else:
-            self._trim_top = ensure_bounds(trim_top)
-
-        if (
-            self._old_cursor_coords is not None
-            and self._old_cursor_coords != canv.cursor
-        ):
-            self._old_cursor_coords = None
-            curscol, cursrow = canv.cursor
-            if cursrow < self._trim_top:
-                self._trim_top = cursrow
-            elif cursrow >= self._trim_top + maxrow:
-                self._trim_top = max(0, cursrow - maxrow + 1)
-
-    def _get_original_widget_size(self, size):
-        ow = self._original_widget
-        sizing = ow.sizing()
-        if FIXED in sizing:
-            return ()
-        elif FLOW in sizing:
-            return (size[0],)
-
-    def get_scrollpos(self, size=None, focus=False):
-        return self._trim_top
-
-    def set_scrollpos(self, position):
-        self._trim_top = int(position)
-        self._invalidate()
-
-    def rows_max(self, size=None, focus=False):
-        if size is not None:
-            ow = self._original_widget
-            ow_size = self._get_original_widget_size(size)
-            sizing = ow.sizing()
-            if FIXED in sizing:
-                self._rows_max_cached = ow.pack(ow_size, focus)[1]
-            elif FLOW in sizing:
-                self._rows_max_cached = ow.rows(ow_size, focus)
+        def keypress(self, size, key):
+            if key in ("up", "k"):
+                self._trim_top = max(0, self._trim_top - 1)
+                self._invalidate()
+            elif key in ("down", "j"):
+                self._trim_top += 1
+                self._invalidate()
             else:
-                raise RuntimeError("Not a flow/box widget: %r" % self._original_widget)
-        return self._rows_max_cached
+                return key
+
+    return _Scrollable(widget)
 
 
-class App(object):
-    def __init__(self, content):
-        self._palette = [
-            ("menu", "black", "light cyan", "standout"),
-            ("title", "default,bold", "default", "bold"),
+def generate_content(key: str) -> urwid.Widget | None:
+    """Build the main content widget for a status code or header."""
+    try:
+        descriptions, is_code, normalised = get_descriptions(key)
+        entry = descriptions[normalised]
+    except KeyError:
+        return None
+
+    title = "STATUS MESSAGE" if is_code else "HEADER INFO"
+    message_prefix = f"{normalised}: " if is_code else f"{normalised}, Example= "
+
+    pile = urwid.Pile(
+        [
+            urwid.Text(
+                "STATCODE: The Manual for HTTP Status Codes and Headers\n",
+                align="center",
+            ),
+            urwid.Text(("title", title)),
+            urwid.Padding(
+                urwid.Text(message_prefix + entry["message"] + "\n"),
+                left=5,
+            ),
+            urwid.Text(("title", "CATEGORY")),
+            urwid.Padding(urwid.Text(entry["category"] + "\n"), left=5),
+            urwid.Text(("title", "DESCRIPTION")),
+            urwid.Padding(urwid.Text(entry["description"] + "\n"), left=5),
+            urwid.Text(("title", "COPYRIGHT")),
+            urwid.Padding(urwid.Text(_copyright_text(is_code) + "\n"), left=5),
         ]
+    )
 
-        menu = urwid.Text(
-            ["\n", ("menu", " Q "), ("light gray", " Quit")]
-        )  # TODO: Make like man pages (vim input)
-        layout = urwid.Frame(body=content, footer=menu)
+    return urwid.Padding(_make_scrollable(pile), left=1, right=1)
 
-        main_loop = urwid.MainLoop(
-            layout, self._palette, unhandled_input=App._handle_input, handle_mouse=True
+
+class App:
+    """Simple full-screen TUI."""
+
+    PALETTE = [
+        ("menu", "black", "light cyan", "standout"),
+        ("title", "default,bold", "default", "bold"),
+    ]
+
+    def __init__(self, body: urwid.Widget) -> None:
+        footer = urwid.Text(["\n", ("menu", " Q "), ("light gray", " Quit")])
+        layout = urwid.Frame(body=body, footer=footer)
+        loop = urwid.MainLoop(
+            layout,
+            self.PALETTE,
+            unhandled_input=self._handle_input,
+            handle_mouse=True,
         )
-        main_loop.run()
+        loop.run()
 
     @staticmethod
-    def _handle_input(inp):
-        if inp in ("q", "Q"):
+    def _handle_input(key: str) -> None:
+        if key in ("q", "Q"):
             raise urwid.ExitMainLoop()
 
 
-def output_without_ui(content):
-    size = shutil.get_terminal_size()
-    canvas = content.render(size)
-    text = ("\n".join(text.decode("utf-8") for text in canvas.text)).rstrip()
+def output_without_ui(widget: urwid.Widget) -> None:
+    """Render the widget to plain text (for pipes / dumb terminals)."""
+    cols, rows = shutil.get_terminal_size()
+    canvas = widget.render((cols, rows))
+    text = "\n".join(line.decode("utf-8") for line in canvas.text).rstrip()
     print(text)
 
 
-def generate_content(status_code):
-    try:
-        code_descriptions, num, status_code = get_yaml_dictionary(status_code)
-        content = code_descriptions[status_code]
-        pile = urwid.Pile(
-            [
-                urwid.Text(
-                    "STATCODE: The Manual for HTTP Status Codes and Headers\n",
-                    align="center",
-                ),
-                urwid.Text(("title", "STATUS MESSAGE" if num else "HEADER INFO")),
-                urwid.Padding(
-                    urwid.Text(
-                        "".join(
-                            [
-                                str(status_code),
-                                ": " if num else ", Example= ",
-                                content["message"],
-                                "\n",
-                            ]
-                        )
-                    ),
-                    left=5,
-                ),
-                urwid.Text(("title", "CATEGORY")),
-                urwid.Padding(urwid.Text("".join([content["category"], "\n"])), left=5),
-                urwid.Text(("title", "DESCRIPTION")),
-                urwid.Padding(
-                    urwid.Text("".join([content["description"], "\n"])), left=5
-                ),
-                urwid.Text(("title", "COPYRIGHT")),
-                urwid.Padding(
-                    urwid.Text("".join([__load_file_data(num), "\n"])), left=5
-                ),
-            ]
-        )
-        padding = urwid.Padding(Scrollable(pile), left=1, right=1)
-
-        return padding
-    except KeyError:  # None is used to print "not recognized", so KeyError. Other errors have nothing to do with it
-        return None
+# ---------------------------------------------------------------------------
+# CLI
+# ---------------------------------------------------------------------------
 
 
-def __load_file_data(num):
-    copyleft = yaml.safe_load(
-        open("/".join([CURR_DIR, "copyright_description.yml"]), "r")
-    )
-    if num:
-        return copyleft["statuscode"]
-    else:
-        return copyleft["headers"]
-
-
-def get_yaml_dictionary(status_code):
-    try:
-        status_code = int(status_code)
-        num = True
-        filename = "code_descriptions.yml"
-    except (TypeError, ValueError):
-        num = False
-        filename = "header_descriptions.yml"
-    try:
-        code_descriptions = yaml.safe_load(open("/".join([CURR_DIR, filename]), "r"))
-    except yaml.constructor.ConstructorError:
-        print("Invalid file. Only support valid json and yaml files.")
-        sys.exit(1)
-
-    return code_descriptions, num, status_code
-
-
-def print_help():
+def print_help() -> None:
     print(
-        "".join(
-            [
-                BOLD,
-                "statcode v2.1.0 – Made by @shobrook & Refactored by @houssamouhra",
-                END,
-                "\n",
-            ]
-        )
+        f"{BOLD}statcode v{VERSION} – Made by @shobrook & Refactored by @houssamouhra{END}\n"
     )
     print("Like man pages, but for HTTP status codes.\n")
-    print(
-        "".join([UNDERLINE, "Usage:", END, " $ statcode ", YELLOW, "status_code", END])
-    )
-    print("".join([BOLD, "-h, --help:", END, " prints this help"]))
-    print(
-        "".join(
-            [
-                BOLD,
-                "-a,-l, --all,--list statucode",
-                END,
-                " prints all codes in compact version",
-            ]
-        )
-    )
-    print(
-        "".join(
-            [
-                BOLD,
-                "-a,-l, --all,--list headers",
-                END,
-                " prints all headers in compact version",
-            ]
-        )
-    )
-    print("".join([BOLD, "-n, --no-ui", END, " force output without UI"]))
+    print(f"{UNDERLINE}Usage:{END} $ statcode {YELLOW}<status_code|header>{END}")
+    print(f"{BOLD}-h, --help{END}                 show this help")
+    print(f"{BOLD}-a, -l, --all, --list{END} statuscode   list all status codes")
+    print(f"{BOLD}-a, -l, --all, --list{END} headers      list all headers")
+    print(f"{BOLD}-n, --no-ui{END}                force plain-text output")
 
 
-def print_all(status_code):
-    if status_code == "statuscode":
-        code_descriptions, num, status_code = get_yaml_dictionary(200)
+def print_all(kind: str) -> None:
+    if kind == "statuscode":
+        data, is_code, _ = get_descriptions("200")
     else:
-        code_descriptions, num, status_code = get_yaml_dictionary("Accept")
-    del status_code
-    for k, v in code_descriptions.items():
-        print("".join([RED, str(k), ":", END, " ", v["message"] if num else ""]))
+        data, is_code, _ = get_descriptions("Accept")
+
+    for key, value in data.items():
+        msg = value["message"] if is_code else ""
+        print(f"{RED}{key}:{END} {msg}")
 
 
-######
-# MAIN
-######
+def main() -> None:
+    args = [a.lower() for a in sys.argv[1:]]
 
-
-def main():
-    if len(sys.argv) == 1 or sys.argv[1].lower() in ("-h", "--help"):
+    if not args or args[0] in ("-h", "--help"):
         print_help()
-    elif sys.argv[1].lower() in ("-a", "-l", "--all", "--list"):
-        try:
-            status_code = sys.argv[2]
-            if status_code not in ("statuscode", "headers"):
-                print("".join([BOLD, "Wrong parameter for this usage, see help", END]))
-                return
-            print_all(status_code)
-        except IndexError:
-            print_help()
+        return
+
+    if args[0] in ("-a", "-l", "--all", "--list"):
+        if len(args) < 2 or args[1] not in ("statuscode", "headers"):
+            print(f"{BOLD}Wrong parameter – see --help{END}")
+            return
+        print_all(args[1])
+        return
+
+    key = sys.argv[1]  # keep original case for headers
+    no_ui = len(sys.argv) > 2 and sys.argv[2].lower() in ("-n", "--no-ui")
+
+    content = generate_content(key)
+    if content is None:
+        print(f"{RED}Sorry, statcode doesn't recognize: {key}{END}")
+        return
+
+    if no_ui or not _IS_TTY:
+        output_without_ui(content)
     else:
-        status_code = sys.argv[1]
-        without_ui = len(sys.argv) > 2 and sys.argv[2].lower() in ("-n", "--no-ui")
-        content = generate_content(status_code)
+        try:
+            App(content)
+        except Exception:  # noqa: BLE001 – fall back on any TUI failure
+            output_without_ui(content)
 
-        if content:
-            if without_ui or not is_not_dumb:
-                output_without_ui(content)
-            else:
-                try:
-                    App(content)  # Opens interface
-                except NameError:
-                    output_without_ui(content)
-        else:
-            print(
-                "".join([RED, "Sorry, statcode doesn't recognize: ", status_code, END])
-            )
 
-    return
+if __name__ == "__main__":
+    main()
