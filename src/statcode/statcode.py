@@ -27,17 +27,39 @@ END = "\033[0m" if _IS_TTY else ""
 
 @cache
 def _load_yaml(name: str) -> dict[str, Any]:
-    """Load a YAML data file that lives next to this module."""
+    """Load a YAML data file from the distribution or package resources."""
     import yaml
 
+    candidates: list[Path] = []
+
+    # Nuitka standalone layout: <binary_dir>/statcode-data/<name>
+    frozen = getattr(sys, "frozen", False) or "__compiled__" in globals()
+    if frozen:
+        candidates.append(
+            Path(sys.executable).resolve().parent / "statcode-data" / name
+        )
+    else:
+        # Still try argv-based path (covers some install layouts)
+        candidates.append(Path(sys.argv[0]).resolve().parent / "statcode-data" / name)
+
+    # Development / next to this source file
+    candidates.append(Path(__file__).resolve().parent / name)
+
+    for path in candidates:
+        if path.is_file():
+            with path.open(encoding="utf-8") as file:
+                return yaml.safe_load(file)
+
+    # Proper installed package (wheel / editable via importlib.resources)
     try:
-        ref = resources.files(__package__).joinpath(name)
-        with ref.open("r", encoding="utf-8") as f:
-            return yaml.safe_load(f)
-    except (TypeError, AttributeError, FileNotFoundError):
-        path = Path(__file__).parent / name
-        with path.open("r", encoding="utf-8") as f:
-            return yaml.safe_load(f)
+        resource = resources.files(__package__).joinpath(name)
+        with resource.open("r", encoding="utf-8") as file:
+            return yaml.safe_load(file)
+    except (TypeError, AttributeError, FileNotFoundError, OSError) as exc:
+        raise FileNotFoundError(
+            f"Could not find data file {name!r}. Searched: "
+            + ", ".join(str(p) for p in candidates)
+        ) from exc
 
 
 def get_descriptions(key: str) -> tuple[dict[str, Any], bool, str | int]:
