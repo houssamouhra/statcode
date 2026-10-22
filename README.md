@@ -1,5 +1,9 @@
 # statcode
 
+> [!NOTE]
+> Thanks to [@shobrook](https://github.com/shobrook) for the original project and inspiration.
+> The [`statcode` AUR package](https://aur.archlinux.org/packages/statcode) is orphaned and no longer maintained. The package no longer work as expected.
+
 `statcode` is like `man` but for HTTP status codes. If you're a web developer, you probably spend some time looking at response codes (usually errors) and then Googling what they mean. But with `statcode`, you can simply run `$ statcode [status_code]` and get a quick explanation of your HTTP response without leaving the terminal.
 
 ![demo](assets/demo.gif)
@@ -8,20 +12,8 @@
 
 >Requires Python 3.0 or higher
 
-`statcode` works on MacOS, Linux, and Windows (if you use Cygwin). You can install it with pip:
+`statcode` works on macOS, Linux, and Windows. You can install it using [`uv`](https://docs.astral.sh/uv/):
 
 ```bash
-$ pip install statcode
+uv tool install statcode
 ```
-
-Or if you're running Arch, you can install [`statcode`](https://aur.archlinux.org/packages/statcode/) from the AUR:
-
-```bash
-$ aurman -S statcode
-```
-
-## Contributing
-
-This is a pretty small project (something I put together on a plane ride), but with enough help it could turn into a go-to manual for everything HTTP-related. For example, it should be possible to look up different [request headers](https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers), e.g. running `$ statcode cache-control` and getting "Specifies directives for caching mechanisms in both requests and responses." If you'd like to help make this happen, feel free to fork the repo and contribute. 
-
-If you've discovered a bug or have a feature request, create an [issue](https://github.com/shobrook/statcode/issues/new) and I'll take care of it!
