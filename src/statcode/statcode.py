@@ -3,12 +3,12 @@ from __future__ import annotations
 import argparse
 import os
 import shutil
+import sys
+import textwrap
+from functools import cache
 from importlib import resources
 from pathlib import Path
 from typing import Any, ClassVar
-
-import urwid
-import yaml
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -17,7 +17,7 @@ import yaml
 VERSION = "2.1.0"
 
 # Colour helpers (disabled when TERM=dumb)
-_IS_TTY = os.getenv("TERM", "dumb").lower() != "dumb"
+_IS_TTY = sys.stdout.isatty() and os.getenv("TERM", "dumb").lower() != "dumb"
 YELLOW = "\033[33m" if _IS_TTY else ""
 RED = "\033[31m" if _IS_TTY else ""
 BOLD = "\033[1m" if _IS_TTY else ""
@@ -25,15 +25,16 @@ UNDERLINE = "\033[4m" if _IS_TTY else ""
 END = "\033[0m" if _IS_TTY else ""
 
 
+@cache
 def _load_yaml(name: str) -> dict[str, Any]:
     """Load a YAML data file that lives next to this module."""
+    import yaml
+
     try:
-        # Preferred modern way (works with wheels / editable installs)
         ref = resources.files(__package__).joinpath(name)
         with ref.open("r", encoding="utf-8") as f:
             return yaml.safe_load(f)
     except (TypeError, AttributeError, FileNotFoundError):
-        # Fallback for very old Python / weird environments
         path = Path(__file__).parent / name
         with path.open("r", encoding="utf-8") as f:
             return yaml.safe_load(f)
@@ -54,6 +55,7 @@ def get_descriptions(key: str) -> tuple[dict[str, Any], bool, str | int]:
         return data, False, key
 
 
+@cache
 def _copyright_text(is_status_code: bool) -> str:
     data = _load_yaml("copyright_description.yml")
     return data["statuscode"] if is_status_code else data["headers"]
@@ -65,6 +67,9 @@ def _copyright_text(is_status_code: bool) -> str:
 
 
 def _make_scrollable(widget: urwid.Widget) -> urwid.Widget:
+
+    import urwid
+
     """Prefer urwid’s built-in Scrollable; fall back to a minimal implementation."""
     if hasattr(urwid, "Scrollable"):
         return urwid.Scrollable(widget)
@@ -90,7 +95,7 @@ def _make_scrollable(widget: urwid.Widget) -> urwid.Widget:
                 canv.trim_end(canv.rows() - maxrow)
             return canv
 
-        def keypress(self, size, key):
+        def keypress(self, key):
             if key in ("up", "k"):
                 self._trim_top = max(0, self._trim_top - 1)
                 self._invalidate()
@@ -103,7 +108,51 @@ def _make_scrollable(widget: urwid.Widget) -> urwid.Widget:
     return _Scrollable(widget)
 
 
+def format_plain_text(key: str) -> str | None:
+    """Format a status code or header without building urwid widgets."""
+    try:
+        descriptions, is_code, normalised = get_descriptions(key)
+        entry = descriptions[normalised]
+    except KeyError:
+        return None
+
+    width = shutil.get_terminal_size().columns
+    indent = " " * 5
+    body_width = max(1, width - len(indent))
+
+    title = "STATUS MESSAGE" if is_code else "HEADER INFO"
+    identifier = str(normalised)
+    message = entry.get("message", "Unknown")
+
+    if is_code:
+        heading = f"{identifier}: {message}"
+    else:
+        heading = f"{identifier}, Example= {message}"
+
+    def wrap_body(text: str) -> str:
+        return textwrap.fill(
+            text,
+            width=body_width,
+            initial_indent=indent,
+            subsequent_indent=indent,
+        )
+
+    sections = [
+        f" {title}\n{wrap_body(heading)}",
+        f" CATEGORY\n{wrap_body(entry.get('category', 'Not available'))}",
+        f" DESCRIPTION\n{wrap_body(entry.get('description', 'Not available'))}",
+        f" COPYRIGHT\n{wrap_body(_copyright_text(is_code))}",
+    ]
+
+    header = "STATCODE: The Manual for HTTP Status Codes and Headers".center(width)
+
+    return f"{header}\n\n" + "\n\n".join(sections)
+
+
 def generate_content(key: str) -> urwid.Widget | None:
+
+    import urwid
+
     """Build the main content widget for a status code or header."""
     try:
         descriptions, is_code, normalised = get_descriptions(key)
@@ -198,6 +247,9 @@ class App:
     ]
 
     def __init__(self, body: urwid.Widget) -> None:
+
+        import urwid
+
         footer = urwid.Text(["\n", ("menu", " Q "), ("light gray", " Quit")])
         layout = urwid.Frame(body=body, footer=footer)
         loop = urwid.MainLoop(
@@ -214,6 +266,8 @@ class App:
     @staticmethod
     def _handle_input(key: str) -> None:
         if key in ("q", "Q"):
+            import urwid
+
             raise urwid.ExitMainLoop()
 
 
@@ -338,18 +392,26 @@ def main() -> None:
         parser.print_help()
         return
 
+    if args.no_ui or not _IS_TTY:
+        output = format_plain_text(args.key)
+
+        if output is None:
+            print(f"{RED}Sorry, statcode doesn't recognize: {args.key}{END}")
+            return
+
+        print(output)
+        return
+
     content = generate_content(args.key)
+
     if content is None:
         print(f"{RED}Sorry, statcode doesn't recognize: {args.key}{END}")
         return
 
-    if args.no_ui or not _IS_TTY:
+    try:
+        App(content)
+    except Exception:  # noqa: BLE001 – fall back on any TUI failure
         output_without_ui(content)
-    else:
-        try:
-            App(content)
-        except Exception:  # noqa: BLE001 – fall back on any TUI failure
-            output_without_ui(content)
 
 
 if __name__ == "__main__":
