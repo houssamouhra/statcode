@@ -8,9 +8,6 @@ from importlib import resources
 from pathlib import Path
 from typing import Any, ClassVar
 
-import urwid
-import yaml
-
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
@@ -28,13 +25,13 @@ END = "\033[0m" if _IS_TTY else ""
 
 def _load_yaml(name: str) -> dict[str, Any]:
     """Load a YAML data file that lives next to this module."""
+    import yaml
+
     try:
-        # Preferred modern way (works with wheels / editable installs)
         ref = resources.files(__package__).joinpath(name)
         with ref.open("r", encoding="utf-8") as f:
             return yaml.safe_load(f)
     except (TypeError, AttributeError, FileNotFoundError):
-        # Fallback for very old Python / weird environments
         path = Path(__file__).parent / name
         with path.open("r", encoding="utf-8") as f:
             return yaml.safe_load(f)
@@ -66,6 +63,9 @@ def _copyright_text(is_status_code: bool) -> str:
 
 
 def _make_scrollable(widget: urwid.Widget) -> urwid.Widget:
+
+    import urwid
+
     """Prefer urwid’s built-in Scrollable; fall back to a minimal implementation."""
     if hasattr(urwid, "Scrollable"):
         return urwid.Scrollable(widget)
@@ -146,6 +146,9 @@ def format_plain_text(key: str) -> str | None:
 
 
 def generate_content(key: str) -> urwid.Widget | None:
+
+    import urwid
+
     """Build the main content widget for a status code or header."""
     try:
         descriptions, is_code, normalised = get_descriptions(key)
@@ -240,6 +243,9 @@ class App:
     ]
 
     def __init__(self, body: urwid.Widget) -> None:
+
+        import urwid
+
         footer = urwid.Text(["\n", ("menu", " Q "), ("light gray", " Quit")])
         layout = urwid.Frame(body=body, footer=footer)
         loop = urwid.MainLoop(
@@ -256,6 +262,8 @@ class App:
     @staticmethod
     def _handle_input(key: str) -> None:
         if key in ("q", "Q"):
+            import urwid
+
             raise urwid.ExitMainLoop()
 
 
