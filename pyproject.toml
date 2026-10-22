@@ -38,5 +38,4 @@ packages = ["src/statcode"]
 [dependency-groups]
 dev = [
     "nuitka>=4.3.1",
-    "ruff>=0.0.17",
 ]
