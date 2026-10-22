@@ -1,11 +1,11 @@
 from __future__ import annotations
 
+import argparse
 import os
 import shutil
-import sys
 from importlib import resources
 from pathlib import Path
-from typing import Any
+from typing import Any, ClassVar
 
 import urwid
 import yaml
@@ -111,77 +111,90 @@ def generate_content(key: str) -> urwid.Widget | None:
     except KeyError:
         return None
 
-    # ---- colour helpers (only things that help scanning) ----
     def section(title: str) -> urwid.Text:
         return urwid.Text(("title", title))
 
     def body(text: str) -> urwid.Padding:
-        return urwid.Padding(urwid.Text(text + "\n"), left=5)
+        return urwid.Padding(
+            urwid.Text(f"{text}\n"),
+            left=5,
+        )
 
-    # Status code / header name gets a distinct colour
+    def header_line(
+        attr: str,
+        identifier: str,
+        separator: str,
+    ) -> urwid.Text:
+        return urwid.Text(
+            [
+                (attr, identifier),
+                ("default", separator),
+                ("message", entry.get("message", "Unknown")),
+                ("default", "\n"),
+            ]
+        )
+
     if is_code:
-        # Colour the numeric code based on class (1xx–5xx)
+        code_class = normalised // 100
         code_attr = {
-            1: "info",  # 1xx
-            2: "success",  # 2xx
-            3: "redirect",  # 3xx
-            4: "clienterr",  # 4xx
-            5: "servererr",  # 5xx
-        }.get(normalised // 100, "code")
+            1: "info",
+            2: "success",
+            3: "redirect",
+            4: "clienterr",
+            5: "servererr",
+        }.get(code_class, "code")
 
-        header_line = [
-            (code_attr, str(normalised)),
-            ("default", ": "),
-            ("message", entry["message"]),
-            ("default", "\n"),
-        ]
+        heading = header_line(code_attr, str(normalised), ": ")
         main_title = "STATUS MESSAGE"
     else:
-        header_line = [
-            ("code", str(normalised)),
-            ("default", ", Example= "),
-            ("message", entry["message"]),
-            ("default", "\n"),
-        ]
+        heading = header_line("code", str(normalised), ", Example= ")
         main_title = "HEADER INFO"
+
+    content_sections = [
+        section(main_title),
+        urwid.Padding(heading, left=5),
+        section("CATEGORY"),
+        body(entry.get("category", "Not available")),
+        section("DESCRIPTION"),
+        body(entry.get("description", "Not available")),
+        section("COPYRIGHT"),
+        body(_copyright_text(is_code)),
+    ]
 
     pile = urwid.Pile(
         [
             urwid.Text(
-                ("header", "STATCODE: The Manual for HTTP Status Codes and Headers\n"),
+                (
+                    "header",
+                    "STATCODE: The Manual for HTTP Status Codes and Headers\n",
+                ),
                 align="center",
             ),
-            section(main_title),
-            urwid.Padding(urwid.Text(header_line), left=5),
-            section("CATEGORY"),
-            body(entry["category"]),
-            section("DESCRIPTION"),
-            body(entry["description"]),
-            section("COPYRIGHT"),
-            body(_copyright_text(is_code)),
+            *content_sections,
         ]
     )
 
-    return urwid.Padding(_make_scrollable(pile), left=1, right=1)
+    return urwid.Padding(
+        _make_scrollable(pile),
+        left=1,
+        right=1,
+    )
 
 
 class App:
     """Simple full-screen TUI."""
 
-    PALETTE = [
-        # existing
+    PALETTE: ClassVar[list[tuple[str, ...]]] = [
         ("menu", "black", "light cyan", "standout"),
         ("title", "default,bold", "default", "bold"),
-        # new semantic colours
         ("header", "dark cyan", "default"),
         ("code", "yellow,bold", "default"),
         ("message", "default,bold", "default"),
-        # status-code class colours
-        ("info", "light blue,bold", "default"),  # 1xx
-        ("success", "light green,bold", "default"),  # 2xx
-        ("redirect", "yellow,bold", "default"),  # 3xx
-        ("clienterr", "light red,bold", "default"),  # 4xx
-        ("servererr", "light magenta,bold", "default"),  # 5xx
+        ("info", "light blue,bold", "default"),
+        ("success", "light green,bold", "default"),
+        ("redirect", "yellow,bold", "default"),
+        ("clienterr", "light red,bold", "default"),
+        ("servererr", "light magenta,bold", "default"),
     ]
 
     def __init__(self, body: urwid.Widget) -> None:
@@ -196,7 +209,6 @@ class App:
         try:
             loop.run()
         except KeyboardInterrupt:
-            # Ctrl+C → clean exit
             pass
 
     @staticmethod
@@ -218,16 +230,47 @@ def output_without_ui(widget: urwid.Widget) -> None:
 # ---------------------------------------------------------------------------
 
 
-def print_help() -> None:
-    print(
-        f"{BOLD}statcode v{VERSION} – Made by @shobrook & Refactored by @houssamouhra{END}\n"
-    )
-    print("Like man pages, but for HTTP status codes.\n")
-    print(f"{UNDERLINE}Usage:{END} $ statcode {YELLOW}<status_code|header>{END}")
-    print(f"{BOLD}-h, --help{END}                 show this help")
-    print(f"{BOLD}-a, -l, --all, --list{END} statuscode   list all status codes")
-    print(f"{BOLD}-a, -l, --all, --list{END} headers      list all headers")
-    print(f"{BOLD}-n, --no-ui{END}                force plain-text output")
+class StatcodeArgumentParser(argparse.ArgumentParser):
+    def format_help(self) -> str:
+        return (
+            f"\n"
+            f"{BOLD}Like man pages, but for HTTP status codes.{END}\n\n"
+            f"{UNDERLINE}USAGE{END}\n"
+            f"  {BOLD}statcode{END} "
+            f"{YELLOW}<status_code|header>{END}\n"
+            f"  {BOLD}statcode{END} "
+            f"{YELLOW}--list <statuscode|headers>{END}\n\n"
+            f"{UNDERLINE}OPTIONS{END}\n"
+            f"  {BOLD}-h, --help{END}            "
+            "Show this help message\n"
+            f"  {BOLD}-a, -l, --all, --list{END} "
+            f"{YELLOW}{{statuscode,headers}}{END}\n"
+            "                        List all status codes or headers\n"
+            f"  {BOLD}-n, --no-ui{END}           "
+            "Force plain-text output\n"
+            f"  {BOLD}-v, --version{END}         "
+            "Show statcode version\n\n"
+            f"{BOLD}Made by @shobrook & Fixed by @houssamouhra{END}\n"
+        )
+
+    def error(self, message: str) -> None:
+        if message.startswith("unrecognized arguments: "):
+            unknown = message.removeprefix("unrecognized arguments: ")
+            self.exit(
+                2,
+                f"{RED}error: unknown option {unknown}{END}\n"
+                f"Try '{YELLOW}{self.prog} --help{END}' for usage.\n",
+            )
+
+        if ("expected one argument" in message and "--list" in message) or (
+            "invalid choice" in message and "--list" in message
+        ):
+            self.exit(
+                2,
+                f"{RED}error: --list requires a value: "
+                f"{{statuscode,headers}}\n{END}"
+                f"Try '{YELLOW}{self.prog} --help{END}' for usage.\n",
+            )
 
 
 def print_all(kind: str) -> None:
@@ -242,28 +285,65 @@ def print_all(kind: str) -> None:
 
 
 def main() -> None:
-    args = [a.lower() for a in sys.argv[1:]]
+    parser = StatcodeArgumentParser(
+        prog="statcode",
+        add_help=False,
+    )
 
-    if not args or args[0] in ("-h", "--help"):
-        print_help()
+    parser.add_argument(
+        "key",
+        nargs="?",
+        help="HTTP status code or header name",
+    )
+
+    parser.add_argument(
+        "-h",
+        "--help",
+        action="help",
+        help="Show this help message and exit",
+    )
+
+    parser.add_argument(
+        "-n",
+        "--no-ui",
+        action="store_true",
+        help="force plain-text output",
+    )
+
+    parser.add_argument(
+        "-a",
+        "-l",
+        "--all",
+        "--list",
+        choices=("statuscode", "headers"),
+        dest="list_kind",
+        help="list all status codes or headers",
+    )
+
+    parser.add_argument(
+        "-v",
+        "--version",
+        action="version",
+        version=f"%(prog)s {VERSION}",
+        help="Show the version and exit",
+    )
+
+    args = parser.parse_args()
+
+    if args.list_kind:
+        print_all(args.list_kind)
         return
 
-    if args[0] in ("-a", "-l", "--all", "--list"):
-        if len(args) < 2 or args[1] not in ("statuscode", "headers"):
-            print(f"{BOLD}Wrong parameter – see --help{END}")
-            return
-        print_all(args[1])
+    if args.key is None:
+        parser.print_help()
         return
 
-    key = sys.argv[1]  # keep original case for headers
-    no_ui = len(sys.argv) > 2 and sys.argv[2].lower() in ("-n", "--no-ui")
-
-    content = generate_content(key)
+    content = generate_content(args.key)
     if content is None:
-        print(f"{RED}Sorry, statcode doesn't recognize: {key}{END}")
+        print(f"{RED}Sorry, statcode doesn't recognize: {args.key}{END}")
         return
 
-    if no_ui or not _IS_TTY:
+    if args.no_ui or not _IS_TTY:
         output_without_ui(content)
     else:
         try:
