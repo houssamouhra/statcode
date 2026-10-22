@@ -6,10 +6,15 @@ BUILD_DIR := build
 DIST_NAME := statcode-dist
 DIST_DIR  := $(BUILD_DIR)/$(DIST_NAME).dist
 BINARY    := $(DIST_DIR)/statcode
+STAMP     := $(BUILD_DIR)/.built
+
+SOURCES   := $(shell find src/statcode -type f -name '*.py' -o -name '*.yml') pyproject.toml uv.lock
 
 .PHONY: build install clean
 
-build:
+build: $(STAMP)
+
+$(STAMP): $(SOURCES)
 	@echo "Building statcode..."
 	uv run python -m nuitka \
 		--mode=standalone \
@@ -21,12 +26,12 @@ build:
 		--nofollow-import-to=doctest \
 		--include-data-files="src/statcode/*.yml=statcode-data/" \
 		src/statcode
-	@echo ""
+	@touch $(STAMP)
 	@echo "Build complete: $(BINARY)"
 
 
 install: build
-	install -Dm755 $(BINARY) $(DESTDIR)$(LIBDIR)/statcode
+	install -d $(DESTDIR)$(LIBDIR) $(DESTDIR)$(BINDIR)
 	cp -a $(DIST_DIR)/. $(DESTDIR)$(LIBDIR)/
 	install -d $(DESTDIR)$(BINDIR)
 	ln -sfn $(LIBDIR)/statcode $(DESTDIR)$(BINDIR)/statcode
