@@ -19,6 +19,12 @@ wheels = [
 ]
 
 [[package]]
+name = "nuitka"
+version = "4.3.1"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/da/0f/db5cfdebf906a6de141bfdadcd72a7417ba710ba9c9d307be185a69a7c8d/nuitka-4.3.1.tar.gz", hash = "sha256:b9c87a694acc424cfffa06abf149fddbdfa85f6daac998df67411b5f4269df0f", size = 4771037, upload-time = "2026-10-17T16:34:00.545Z" }
+
+[[package]]
 name = "pyyaml"
 version = "6.0.1"
 source = { registry = "https://pypi.org/simple" }
@@ -270,6 +276,7 @@ dependencies = [
 
 [package.dev-dependencies]
 dev = [
+    { name = "nuitka" },
     { name = "ruff", version = "0.0.17", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.7'" },
     { name = "ruff", version = "0.17.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.7'" },
 ]
@@ -282,7 +289,10 @@ requires-dist = [
 ]
 
 [package.metadata.requires-dev]
-dev = [{ name = "ruff", specifier = ">=0.0.17" }]
+dev = [
+    { name = "nuitka", specifier = ">=4.3.1" },
+    { name = "ruff", specifier = ">=0.0.17" },
+]
 
 [[package]]
 name = "typing-extensions"
