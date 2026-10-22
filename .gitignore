@@ -9,3 +9,9 @@ wheels/
 # Virtual environments
 .venv
 .env
+
+# nuitka build
+statcode
+statcode.build
+statcode.dist
+statcode.onefile-build
