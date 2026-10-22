@@ -3,7 +3,9 @@ from __future__ import annotations
 import argparse
 import os
 import shutil
+import sys
 import textwrap
+from functools import cache
 from importlib import resources
 from pathlib import Path
 from typing import Any, ClassVar
@@ -15,7 +17,7 @@ from typing import Any, ClassVar
 VERSION = "2.1.0"
 
 # Colour helpers (disabled when TERM=dumb)
-_IS_TTY = os.getenv("TERM", "dumb").lower() != "dumb"
+_IS_TTY = sys.stdout.isatty() and os.getenv("TERM", "dumb").lower() != "dumb"
 YELLOW = "\033[33m" if _IS_TTY else ""
 RED = "\033[31m" if _IS_TTY else ""
 BOLD = "\033[1m" if _IS_TTY else ""
@@ -23,6 +25,7 @@ UNDERLINE = "\033[4m" if _IS_TTY else ""
 END = "\033[0m" if _IS_TTY else ""
 
 
+@cache
 def _load_yaml(name: str) -> dict[str, Any]:
     """Load a YAML data file that lives next to this module."""
     import yaml
@@ -52,6 +55,7 @@ def get_descriptions(key: str) -> tuple[dict[str, Any], bool, str | int]:
         return data, False, key
 
 
+@cache
 def _copyright_text(is_status_code: bool) -> str:
     data = _load_yaml("copyright_description.yml")
     return data["statuscode"] if is_status_code else data["headers"]
