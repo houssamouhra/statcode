@@ -11,6 +11,7 @@ authors = [
 ]
 keywords = ["http", "status-codes", "cli", "man-page"]
 dependencies = [
+    "argparse>=1.4.0",
     "pyyaml>=6.0",
     "urwid>=2.1",
 ]
