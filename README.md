@@ -11,10 +11,16 @@
 
 ## Installation
 
->Requires Python 3.0 or higher
-
-`statcode` works on macOS, Linux, and Windows. You can install it using [`uv`](https://docs.astral.sh/uv/):
-
+### With uv
 ```bash
 uv tool install statcode
+```
+
+### From source
+```bash
+# Install system-wide (default: /usr/bin + /usr/lib/statcode)
+sudo make install
+
+# Or install for your user only
+make install PREFIX=$HOME/.local
 ```
